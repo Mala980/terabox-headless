@@ -92,7 +92,7 @@ func Start(cl *client.Client) (*QRStartResult, error) {
 		return nil, fmt.Errorf("browserid cookie not set")
 	}
 
-	loginOrigin := "https://passport.baidu.com"
+	loginOrigin := "https://www.1024terabox.com"
 
 	form := url.Values{}
 	form.Set("browserid", browserID)

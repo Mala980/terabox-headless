@@ -1,11 +1,14 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -30,6 +33,7 @@ func New(baseURL string) *Client {
 		},
 		MaxIdleConns:    10,
 		IdleConnTimeout: 30 * time.Second,
+		DialContext:     customDialContext,
 	}
 	return &Client{
 		httpClient: &http.Client{
@@ -52,6 +56,87 @@ func New(baseURL string) *Client {
 		cookies: make(map[string]string),
 		baseURL: strings.TrimRight(baseURL, "/"),
 	}
+}
+
+var dnsServers = loadDNSServers()
+
+func loadDNSServers() []string {
+	var servers []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" && !seen[s] {
+			seen[s] = true
+			servers = append(servers, s)
+		}
+	}
+	paths := []string{
+		"/data/data/com.termux/files/usr/etc/resolv.conf",
+		"/etc/resolv.conf",
+	}
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "nameserver" {
+				add(fields[1])
+			}
+		}
+	}
+	add("8.8.8.8")
+	add("1.1.1.1")
+	return servers
+}
+
+var resolver = &net.Resolver{
+	PreferGo: true,
+	Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+		d := net.Dialer{Timeout: 5 * time.Second}
+		var lastErr error
+		for _, server := range dnsServers {
+			addr := net.JoinHostPort(server, "53")
+			conn, err := d.DialContext(ctx, network, addr)
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		if lastErr == nil {
+			lastErr = fmt.Errorf("no DNS servers available")
+		}
+		return nil, lastErr
+	},
+}
+
+func customDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, network, address)
+	}
+	ips, err := resolver.LookupNetIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return nil, fmt.Errorf("resolve %s: %w", host, err)
+	}
+	var lastErr error
+	for _, ip := range ips {
+		addr := net.JoinHostPort(ip.String(), port)
+		conn, err := (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, network, addr)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 func (c *Client) SetCookies(cookies map[string]string) {

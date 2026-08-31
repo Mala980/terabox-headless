@@ -62,13 +62,20 @@ func RenderQRASCII(pngData []byte) error {
 }
 
 func TryOpenFile(path string) {
-	if _, err := os.Stat("/data/data/com.termux/files/usr/bin/termux-open"); err == nil {
-		exec.Command("termux-open", path).Start()
-		return
+	defer func() {
+		// Best-effort: never crash the process on platform syscall restrictions.
+		_ = recover()
+	}()
+
+	candidates := []string{
+		"/data/data/com.termux/files/usr/bin/termux-open",
+		"/usr/bin/xdg-open",
+		"/usr/bin/open",
 	}
-	for _, tool := range []string{"xdg-open", "open"} {
-		if _, err := exec.LookPath(tool); err == nil {
-			exec.Command(tool, path).Start()
+	for _, tool := range candidates {
+		if _, err := os.Stat(tool); err == nil {
+			cmd := exec.Command(tool, path)
+			cmd.Start()
 			return
 		}
 	}
