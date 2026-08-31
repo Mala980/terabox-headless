@@ -8,6 +8,7 @@ import (
 
 	"github.com/mala980/terabox-headless/internal/client"
 	"github.com/mala980/terabox-headless/internal/download"
+	"github.com/mala980/terabox-headless/internal/emaillogin"
 	"github.com/mala980/terabox-headless/internal/qrlogin"
 	"github.com/mala980/terabox-headless/internal/session"
 	"github.com/mala980/terabox-headless/internal/terabox"
@@ -42,7 +43,7 @@ func main() {
 
 	switch cmd {
 	case "login":
-		cmdLogin(cl, sess)
+		cmdLogin(cl, sess, os.Args[2:])
 	case "logout":
 		cmdLogout(sess)
 	case "status":
@@ -82,6 +83,7 @@ func usage() {
 	fmt.Println(`Terabox Headless Browser - lightweight CLI for terabox.com
 Usage:
   terabox login              Start QR login and save session
+  terabox login <email>      Login with email/password
   terabox logout             Clear saved session
   terabox status             Check login status and quota
   terabox ls [dir]           List files in directory
@@ -89,7 +91,7 @@ Usage:
   terabox dl <remote> [local]  Download file from remote path`)
 }
 
-func cmdLogin(cl *client.Client, sess *session.Session) {
+func cmdLogin(cl *client.Client, sess *session.Session, args []string) {
 	if sess.LoggedIn() {
 		fmt.Print("Already logged in. Login again? (y/N): ")
 		var resp string
@@ -97,6 +99,31 @@ func cmdLogin(cl *client.Client, sess *session.Session) {
 		if strings.ToLower(resp) != "y" {
 			return
 		}
+	}
+
+	if len(args) > 0 {
+		email := args[0]
+		if !strings.Contains(email, "@") {
+			fmt.Fprintf(os.Stderr, "Usage: terabox login <email>  (QR login: terabox login)\n")
+			os.Exit(1)
+		}
+		fmt.Print("Password: ")
+		var password string
+		fmt.Scanln(&password)
+		if password == "" {
+			password = os.Getenv("TERABOX_PASSWORD")
+		}
+		if password == "" {
+			fmt.Fprintln(os.Stderr, "Password required. Set TERABOX_PASSWORD env var or enter it.")
+			os.Exit(1)
+		}
+		fmt.Println("Logging in with email...")
+		if err := emaillogin.EmailLogin(cl, sess, email, password); err != nil {
+			fmt.Fprintf(os.Stderr, "Email login failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Login complete. Session saved.")
+		return
 	}
 
 	start, err := qrlogin.Start(cl)
